@@ -17,14 +17,16 @@
 
 1. 点击本仓库右上角 **Fork**
 2. 在 [Cloudflare 控制台](https://dash.cloudflare.com) → **存储和数据库 → D1** → 创建数据库(名称随意,如 `bookmark-nav-db`),复制其**数据库 ID**
-3. 控制台 → **Workers 和 Pages → 创建 → 导入存储库**,选择你 fork 的仓库,构建配置(三项都要填,不能留默认值):
+3. 控制台 → **Workers 和 Pages → 创建 → 导入存储库**,选择你 fork 的仓库,构建配置(下面都要填,不能留默认值):
    - 构建命令:`npm run build`
    - 部署命令:`npm run deploy`
-   - 构建变量:添加 `D1_DATABASE_ID`,值为第 2 步复制的数据库 ID
-4. 首次部署后,进入该 Worker → **设置 → 变量和机密**(注意不是“构建”里的变量),添加变量 `JWT_SECRET`,**类型必须选「机密(Secret)」**(值为随机长字符串,可用 `openssl rand -hex 32` 生成)
-5. 访问 Worker 域名,首次打开会引导你创建管理员账号
+   - 构建变量 `D1_DATABASE_ID`:值为第 2 步复制的数据库 ID
+   - 构建变量 `JWT_SECRET`:登录会话签名密钥,填随机长字符串(可用 `openssl rand -hex 32` 生成),建议勾选“加密”
+4. 访问 Worker 域名,首次打开会引导你创建管理员账号
 
-> Fork 部署不需要修改仓库里的任何文件(数据库 ID 通过构建变量在部署时自动注入),你的 fork 与本仓库永远保持零差异,因此可以随时用 GitHub 的 **Sync fork** 按钮一键同步新版本。
+> 为什么 `JWT_SECRET` 放在**构建变量**而不是 Worker 的“变量和机密”:通过 GitHub 集成部署时,每次 `wrangler deploy` 会清空面板上手动添加的机密([cloudflare/workers-sdk#8871](https://github.com/cloudflare/workers-sdk/issues/8871)),导致登录报错;放在构建变量则会在构建时自动注入,每次部署都带上,永不丢失。
+
+> Fork 部署不需要修改仓库里的任何文件(配置均通过构建变量在部署时自动注入),你的 fork 与本仓库永远保持零差异,因此可以随时用 GitHub 的 **Sync fork** 按钮一键同步新版本。
 
 ## 更新版本
 

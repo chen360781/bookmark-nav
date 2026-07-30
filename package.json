@@ -48,7 +48,7 @@
   },
   "private": true,
   "scripts": {
-    "build": "node scripts/apply-db-id.mjs && tsc -b && vite build",
+    "build": "node scripts/prepare-deploy-config.mjs && tsc -b && vite build",
     "cf-typegen": "wrangler types",
     "check": "tsc && vite build && wrangler deploy --dry-run",
     "db:migrate": "wrangler d1 migrations apply DB --remote",
