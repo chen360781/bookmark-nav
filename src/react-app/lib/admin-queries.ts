@@ -311,3 +311,35 @@ export function useSaveSettings() {
 		onError: (e) => toast.error(e.message),
 	});
 }
+
+export function useChangePassword() {
+	return useMutation({
+		mutationFn: async (data: { oldPassword: string; newPassword: string }) => {
+			const res = await client.api.auth["change-password"].$post({ json: data });
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "修改失败");
+			}
+		},
+		onSuccess: () => toast.success("密码已修改"),
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useChangeUsername() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (data: { username: string; password: string }) => {
+			const res = await client.api.auth["change-username"].$post({ json: data });
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "修改失败");
+			}
+		},
+		onSuccess: async () => {
+			await qc.invalidateQueries({ queryKey: ["auth-status"] });
+			toast.success("用户名已修改");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}

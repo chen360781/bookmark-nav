@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { users } from "../db/schema";
 import { hashPassword, verifyPassword } from "../lib/password";
+import { requireAuth } from "../middleware/auth";
 import { AUTH_COOKIE, TOKEN_TTL_SECONDS, type AppEnv } from "../lib/types";
 
 const credentialsSchema = z.object({
@@ -84,6 +85,75 @@ export const authRoutes = new Hono<AppEnv>()
 		await issueToken(c, { id: user.id, username: user.username });
 		return c.json({ user: { id: user.id, username: user.username } });
 	})
+	// 修改当前登录用户的密码,需验证原密码
+	.post(
+		"/change-password",
+		requireAuth,
+		zValidator(
+			"json",
+			z.object({
+				oldPassword: z.string().min(1).max(100),
+				newPassword: z.string().min(6).max(100),
+			}),
+		),
+		async (c) => {
+			const me = c.get("user")!;
+			const db = createDb(c.env.DB);
+			const { oldPassword, newPassword } = c.req.valid("json");
+			const [user] = await db
+				.select()
+				.from(users)
+				.where(eq(users.id, me.id))
+				.limit(1);
+			if (!user || !(await verifyPassword(oldPassword, user.passwordHash))) {
+				return c.json({ error: "当前密码错误" }, 400);
+			}
+			await db
+				.update(users)
+				.set({ passwordHash: await hashPassword(newPassword) })
+				.where(eq(users.id, me.id));
+			return c.json({ ok: true });
+		},
+	)
+	// 修改当前登录用户的用户名,需验证当前密码
+	.post(
+		"/change-username",
+		requireAuth,
+		zValidator(
+			"json",
+			z.object({
+				username: z.string().min(1).max(50),
+				password: z.string().min(1).max(100),
+			}),
+		),
+		async (c) => {
+			const me = c.get("user")!;
+			const db = createDb(c.env.DB);
+			const { username, password } = c.req.valid("json");
+			const [user] = await db
+				.select()
+				.from(users)
+				.where(eq(users.id, me.id))
+				.limit(1);
+			if (!user || !(await verifyPassword(password, user.passwordHash))) {
+				return c.json({ error: "密码错误" }, 400);
+			}
+			if (username !== user.username) {
+				const [taken] = await db
+					.select({ id: users.id })
+					.from(users)
+					.where(eq(users.username, username))
+					.limit(1);
+				if (taken) {
+					return c.json({ error: "用户名已被使用" }, 400);
+				}
+			}
+			await db.update(users).set({ username }).where(eq(users.id, me.id));
+			// 用户名存在 JWT 里,修改后重新签发 token
+			await issueToken(c, { id: me.id, username });
+			return c.json({ user: { id: me.id, username } });
+		},
+	)
 	.post("/logout", (c) => {
 		deleteCookie(c, AUTH_COOKIE, { path: "/" });
 		return c.json({ ok: true });
