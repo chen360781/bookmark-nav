@@ -1,0 +1,313 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { client } from "./api";
+
+export type BookmarkPayload = {
+	title: string;
+	url: string;
+	description?: string | null;
+	icon?: string | null;
+	categoryId?: number | null;
+	isPinned?: boolean;
+	visibility?: "public" | "private";
+	tags?: string[];
+};
+
+export type CategoryPayload = {
+	name: string;
+	icon?: string | null;
+	parentId?: number | null;
+	visibility?: "public" | "private";
+};
+
+// 变更成功后统一失效前台列表与后台列表
+function useInvalidate() {
+	const qc = useQueryClient();
+	return () =>
+		Promise.all([
+			qc.invalidateQueries({ queryKey: ["admin-bookmarks"] }),
+			qc.invalidateQueries({ queryKey: ["admin-categories"] }),
+			qc.invalidateQueries({ queryKey: ["nav-bookmarks"] }),
+		]);
+}
+
+export function useAdminBookmarks() {
+	return useQuery({
+		queryKey: ["admin-bookmarks"],
+		queryFn: async () => {
+			const res = await client.api.admin.bookmarks.$get();
+			if (!res.ok) throw new Error("加载书签失败");
+			return res.json();
+		},
+	});
+}
+
+export function useAdminCategories() {
+	return useQuery({
+		queryKey: ["admin-categories"],
+		queryFn: async () => {
+			const res = await client.api.admin.categories.$get();
+			if (!res.ok) throw new Error("加载分类失败");
+			return res.json();
+		},
+	});
+}
+
+export function useSaveBookmark() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async ({ id, data }: { id?: number; data: BookmarkPayload }) => {
+			const res = id
+				? await client.api.admin.bookmarks[":id"].$put({
+						param: { id: String(id) },
+						json: data,
+					})
+				: await client.api.admin.bookmarks.$post({ json: data });
+			if (!res.ok) throw new Error("保存失败");
+			return res.json();
+		},
+		onSuccess: async () => {
+			await invalidate();
+			toast.success("已保存");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useDeleteBookmark() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (id: number) => {
+			const res = await client.api.admin.bookmarks[":id"].$delete({
+				param: { id: String(id) },
+			});
+			if (!res.ok) throw new Error("删除失败");
+		},
+		onSuccess: async () => {
+			await invalidate();
+			toast.success("已删除");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useReorderBookmarks() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (ids: number[]) => {
+			const res = await client.api.admin.bookmarks.reorder.$put({ json: { ids } });
+			if (!res.ok) throw new Error("排序保存失败");
+		},
+		onSuccess: () => invalidate(),
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useSaveCategory() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async ({ id, data }: { id?: number; data: CategoryPayload }) => {
+			const res = id
+				? await client.api.admin.categories[":id"].$put({
+						param: { id: String(id) },
+						json: data,
+					})
+				: await client.api.admin.categories.$post({ json: data });
+			if (!res.ok) {
+				// 透出后端具体原因(如层级超限/循环嵌套)
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "保存失败");
+			}
+			return res.json();
+		},
+		onSuccess: async () => {
+			await invalidate();
+			toast.success("已保存");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useDeleteCategory() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (id: number) => {
+			const res = await client.api.admin.categories[":id"].$delete({
+				param: { id: String(id) },
+			});
+			if (!res.ok) throw new Error("删除失败");
+		},
+		onSuccess: async () => {
+			await invalidate();
+			toast.success("已删除");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useReorderCategories() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (ids: number[]) => {
+			const res = await client.api.admin.categories.reorder.$put({ json: { ids } });
+			if (!res.ok) throw new Error("排序保存失败");
+		},
+		onSuccess: () => invalidate(),
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useFetchMetadata() {
+	return useMutation({
+		mutationFn: async (url: string) => {
+			const res = await client.api.admin.metadata.$post({ json: { url } });
+			if (!res.ok) throw new Error("抓取失败,请检查网址是否可访问");
+			return res.json() as Promise<{
+				title: string | null;
+				description: string | null;
+				icon: string | null;
+			}>;
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+// 批量移动书签到指定分类(null = 未分类)
+export function useBatchMoveBookmarks() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async ({ ids, categoryId }: { ids: number[]; categoryId: number | null }) => {
+			const res = await client.api.admin.bookmarks["batch-category"].$put({
+				json: { ids, categoryId },
+			});
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: string } | null;
+				throw new Error(body?.error ?? "批量移动失败");
+			}
+			return res.json();
+		},
+		onSuccess: async (r) => {
+			await invalidate();
+			toast.success(`已移动 ${r.count} 个书签`);
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useBatchDeleteBookmarks() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (ids: number[]) => {
+			const res = await client.api.admin.bookmarks["batch-delete"].$post({
+				json: { ids },
+			});
+			if (!res.ok) throw new Error("批量删除失败");
+			return res.json();
+		},
+		onSuccess: async (r) => {
+			await invalidate();
+			toast.success(`已删除 ${r.count} 个书签`);
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+// 批量删除分类(子分类级联删除,直属书签变为未分类)
+export function useBatchDeleteCategories() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (ids: number[]) => {
+			const res = await client.api.admin.categories["batch-delete"].$post({
+				json: { ids },
+			});
+			if (!res.ok) throw new Error("批量删除失败");
+			return res.json();
+		},
+		onSuccess: async (r) => {
+			await invalidate();
+			toast.success(`已删除 ${r.count} 个分类`);
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+// 死链检测:前端分批调用后端(每批 10 个并发),通过 onProgress 回报进度
+export function useCheckDeadLinks() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async ({
+			ids,
+			onProgress,
+		}: {
+			ids: number[];
+			onProgress?: (done: number, total: number) => void;
+		}) => {
+			let dead = 0;
+			for (let i = 0; i < ids.length; i += 10) {
+				const chunk = ids.slice(i, i + 10);
+				const res = await client.api.admin["check-links"].$post({
+					json: { ids: chunk },
+				});
+				if (!res.ok) throw new Error("死链检测请求失败");
+				const { results } = await res.json();
+				dead += results.filter((r) => r.status === "dead").length;
+				onProgress?.(Math.min(i + 10, ids.length), ids.length);
+			}
+			return { total: ids.length, dead };
+		},
+		onSuccess: async ({ total, dead }) => {
+			await invalidate();
+			if (dead > 0) toast.warning(`检测完成:共 ${total} 个书签,发现 ${dead} 个死链`);
+			else toast.success(`检测完成:${total} 个书签全部可访问`);
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useImportBookmarks() {
+	const invalidate = useInvalidate();
+	return useMutation({
+		mutationFn: async (html: string) => {
+			const res = await client.api.admin.import.$post({ json: { html } });
+			if (!res.ok) throw new Error("导入失败,请确认文件是浏览器导出的书签 HTML");
+			return res.json();
+		},
+		onSuccess: async (r) => {
+			await invalidate();
+			toast.success(
+				`导入完成:新增 ${r.bookmarks} 个书签、${r.categories} 个分类` +
+					(r.skipped ? `,跳过重复 ${r.skipped} 个` : ""),
+			);
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
+
+export function useAdminSettings() {
+	return useQuery({
+		queryKey: ["admin-settings"],
+		queryFn: async () => {
+			const res = await client.api.admin.settings.$get();
+			if (!res.ok) throw new Error("加载设置失败");
+			return res.json() as Promise<Record<string, string>>;
+		},
+	});
+}
+
+export function useSaveSettings() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (data: Record<string, string>) => {
+			const res = await client.api.admin.settings.$put({ json: data });
+			if (!res.ok) throw new Error("保存失败");
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				qc.invalidateQueries({ queryKey: ["admin-settings"] }),
+				qc.invalidateQueries({ queryKey: ["site-settings"] }),
+			]);
+			toast.success("已保存");
+		},
+		onError: (e) => toast.error(e.message),
+	});
+}
