@@ -12,6 +12,7 @@ import {
 	Share2,
 	Shield,
 	Palette,
+	Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +32,7 @@ const navItems = [
 	{ to: "/admin/settings", end: false, icon: Settings, label: "站点设置" },
 	{ to: "/admin/appearance", end: false, icon: Palette, label: "外观设置" },
 	{ to: "/admin/security", end: false, icon: Shield, label: "安全设置" },
+	{ to: "/admin/ai", end: false, icon: Sparkles, label: "AI 设置" },
 ];
 
 // 侧栏/抽屉共用的导航内容

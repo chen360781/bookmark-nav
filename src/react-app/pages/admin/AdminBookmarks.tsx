@@ -14,7 +14,8 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, HeartPulse, Lock, Pencil, Pin, Plus, Sparkles, Trash2 } from "lucide-react";
+import { GripVertical, HeartPulse, Lock, Pencil, Pin, Plus, Trash2, Wand2, Globe } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -50,13 +51,19 @@ import { ConfirmDialog, type ConfirmState } from "@/components/confirm-dialog";
 import {
 	useAdminBookmarks,
 	useAdminCategories,
+	useAdminSettings,
 	useBatchDeleteBookmarks,
 	useBatchMoveBookmarks,
 	useCheckDeadLinks,
 	useDeleteBookmark,
 	useFetchMetadata,
+	useFetchMetadataAI,
 	useReorderBookmarks,
+	useRepairLink,
+	useSummarize,
 	useSaveBookmark,
+	useSuggestCategory,
+	useSuggestTags,
 	type BookmarkPayload,
 } from "@/lib/admin-queries";
 
@@ -66,20 +73,38 @@ function BookmarkDialog({
 	categories,
 	open,
 	onOpenChange,
+	aiEnabled,
+	aiAutoFill,
+	aiTagSuggest,
+	aiAutoCategorize,
+	aiSummary,
 }: {
 	bookmark: Bookmark | null;
 	categories: Category[];
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	aiEnabled: boolean;
+	aiAutoFill: boolean;
+	aiTagSuggest: boolean;
+	aiAutoCategorize: boolean;
+	aiSummary: boolean;
 }) {
 	const save = useSaveBookmark();
 	const fetchMeta = useFetchMetadata();
+	const fetchMetaAI = useFetchMetadataAI();
+	const suggestTags = useSuggestTags();
+	const suggestCategory = useSuggestCategory();
+	const summarize = useSummarize();
+	const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+	const [categoryReason, setCategoryReason] = useState<string>("");
 	const [form, setForm] = useState<BookmarkPayload>({ title: "", url: "" });
 	const flatCats = flattenCategoryTree(categories);
 
 	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)
 	useEffect(() => {
 		if (!open) return;
+		setSuggestedTags([]);
+		setCategoryReason("");
 		setForm(
 			bookmark
 				? {
@@ -107,6 +132,59 @@ function BookmarkDialog({
 		}));
 	}
 
+	async function handleFetchMetaAI() {
+		if (!form.url) return;
+		const meta = await fetchMetaAI.mutateAsync(form.url);
+		setForm((f) => ({
+			...f,
+			title: f.title || meta.title || "",
+			description: f.description || meta.description,
+			icon: f.icon || meta.icon,
+			tags: f.tags?.length ? f.tags : meta.tags,
+		}));
+	}
+
+	async function handleSuggestTags() {
+		if (!form.title && !form.url) return;
+		const { tags } = await suggestTags.mutateAsync({
+			title: form.title || form.url,
+			description: form.description ?? undefined,
+			url: form.url || undefined,
+		});
+		setSuggestedTags(tags);
+	}
+
+	function addSuggestedTag(tag: string) {
+		setForm((f) => ({
+			...f,
+			tags: f.tags?.includes(tag) ? f.tags : [...(f.tags ?? []), tag],
+		}));
+		setSuggestedTags((prev) => prev.filter((t) => t !== tag));
+	}
+
+	async function handleSuggestCategory() {
+		if (!form.title && !form.url) return;
+		const r = await suggestCategory.mutateAsync({
+			title: form.title || form.url,
+			description: form.description ?? undefined,
+			url: form.url || undefined,
+		});
+		if (r.categoryId != null) setForm((f) => ({ ...f, categoryId: r.categoryId! }));
+		setCategoryReason(
+			`${r.isNew ? `建议新建「${r.categoryName ?? ""}」` : `推荐「${r.categoryName ?? ""}」`}${r.reason ? `：${r.reason}` : ""}`,
+		);
+	}
+
+	async function handleSummarize() {
+		if (!form.title && !form.url) return;
+		const { summary } = await summarize.mutateAsync({
+			title: form.title || form.url,
+			description: form.description ?? undefined,
+			url: form.url || undefined,
+		});
+		setForm((f) => ({ ...f, description: summary }));
+	}
+
 	async function handleSubmit(e: FormEvent) {
 		e.preventDefault();
 		await save.mutateAsync({ id: bookmark?.id, data: form });
@@ -131,6 +209,17 @@ function BookmarkDialog({
 								placeholder="https://…"
 								required
 							/>
+							{aiEnabled && aiAutoFill && (
+								<Button
+									type="button"
+									onClick={handleFetchMetaAI}
+									disabled={!form.url || fetchMetaAI.isPending}
+									title="使用 AI 智能提取标题、描述、标签和图标"
+								>
+									<Wand2 className="size-4" />
+									{fetchMetaAI.isPending ? "AI 分析中…" : "AI 填充"}
+								</Button>
+							)}
 							<Button
 								type="button"
 								variant="outline"
@@ -138,7 +227,7 @@ function BookmarkDialog({
 								disabled={!form.url || fetchMeta.isPending}
 								title="自动抓取标题/描述/图标"
 							>
-								<Sparkles className="size-4" />
+								<Globe className="size-4" />
 								{fetchMeta.isPending ? "抓取中…" : "抓取"}
 							</Button>
 						</div>
@@ -160,6 +249,19 @@ function BookmarkDialog({
 							onChange={(e) => setForm({ ...form, description: e.target.value })}
 							rows={2}
 						/>
+						{aiEnabled && aiSummary && (
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={handleSummarize}
+								disabled={summarize.isPending || (!form.title && !form.url)}
+								title="使用 AI 生成一句话摘要"
+							>
+								<Wand2 className="size-4" />
+								{summarize.isPending ? "生成中…" : "AI 摘要"}
+							</Button>
+						)}
 					</div>
 					<div className="grid grid-cols-2 gap-4">
 						<div className="space-y-2">
@@ -182,23 +284,69 @@ function BookmarkDialog({
 									))}
 								</SelectContent>
 							</Select>
-						</div>
+							<div className="flex flex-wrap items-center gap-2">
+								{aiEnabled && aiAutoCategorize && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={handleSuggestCategory}
+										disabled={suggestCategory.isPending || (!form.title && !form.url)}
+										title="使用 AI 推荐分类"
+									>
+										<Wand2 className="size-4" />
+										{suggestCategory.isPending ? "分析中…" : "AI 分类"}
+									</Button>
+								)}
+								{categoryReason && (
+									<span className="text-xs text-muted-foreground">{categoryReason}</span>
+								)}
+							</div>
+							</div>
 						<div className="space-y-2">
 							<Label htmlFor="bm-tags">标签(逗号分隔)</Label>
-							<Input
-								id="bm-tags"
-								value={(form.tags ?? []).join(", ")}
-								onChange={(e) =>
-									setForm({
-										...form,
-										tags: e.target.value
-											.split(/[,，]/)
-											.map((t) => t.trim())
-											.filter(Boolean),
-									})
-								}
-								placeholder="工具, 文档"
-							/>
+							<div className="flex gap-2">
+								<Input
+									id="bm-tags"
+									value={(form.tags ?? []).join(", ")}
+									onChange={(e) =>
+										setForm({
+											...form,
+											tags: e.target.value
+												.split(/[,，]/)
+												.map((t) => t.trim())
+												.filter(Boolean),
+										})
+									}
+									placeholder="工具, 文档"
+								/>
+								{aiEnabled && aiTagSuggest && (
+									<Button
+										type="button"
+										variant="outline"
+										onClick={handleSuggestTags}
+										disabled={suggestTags.isPending || (!form.title && !form.url)}
+										title="使用 AI 推荐标签"
+									>
+										<Wand2 className="size-4" />
+										{suggestTags.isPending ? "推荐中…" : "AI 推荐"}
+									</Button>
+								)}
+							</div>
+							{suggestedTags.length > 0 && (
+								<div className="flex flex-wrap gap-1.5">
+									{suggestedTags.map((t) => (
+										<button
+											key={t}
+											type="button"
+											onClick={() => addSuggestedTag(t)}
+											className="rounded-full border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+										>
+											+ {t}
+										</button>
+									))}
+								</div>
+							)}
 						</div>
 					</div>
 					<div className="space-y-2">
@@ -249,6 +397,12 @@ function SortableRow({
 	onToggleSelect,
 	onEdit,
 	onDelete,
+	onRepair,
+	aiDeadLinkRepair,
+	repairPending,
+	onSummarize,
+	aiSummary,
+	summarizePending,
 }: {
 	bookmark: Bookmark;
 	categoryName: string;
@@ -256,6 +410,12 @@ function SortableRow({
 	onToggleSelect: () => void;
 	onEdit: () => void;
 	onDelete: () => void;
+	onRepair: () => void;
+	aiDeadLinkRepair: boolean;
+	repairPending: boolean;
+	onSummarize: () => void;
+	aiSummary: boolean;
+	summarizePending: boolean;
 }) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
 		useSortable({ id: bookmark.id });
@@ -312,6 +472,30 @@ function SortableRow({
 			<TableCell className="text-center">{bookmark.clickCount}</TableCell>
 			<TableCell>
 				<div className="flex justify-end gap-1">
+					{aiSummary && (
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							onClick={onSummarize}
+							disabled={summarizePending}
+							aria-label="AI 摘要"
+							title="使用 AI 生成内容摘要"
+						>
+							<Wand2 className="size-4 text-sky-500" />
+						</Button>
+					)}
+					{bookmark.status === "dead" && aiDeadLinkRepair && (
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							onClick={onRepair}
+							disabled={repairPending}
+							aria-label="AI 修复"
+							title="使用 AI 推断替代链接"
+						>
+							<Wand2 className="size-4 text-orange-500" />
+						</Button>
+					)}
 					<Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="编辑">
 						<Pencil className="size-4" />
 					</Button>
@@ -333,14 +517,29 @@ function SortableRow({
 export default function AdminBookmarks() {
 	const { data, isLoading } = useAdminBookmarks();
 	const { data: catData } = useAdminCategories();
+	const { data: settings } = useAdminSettings();
 	const del = useDeleteBookmark();
 	const reorder = useReorderBookmarks();
 	const batchMove = useBatchMoveBookmarks();
 	const batchDel = useBatchDeleteBookmarks();
 	const checkLinks = useCheckDeadLinks();
+	const repairLink = useRepairLink();
+	const summarize = useSummarize();
 	const [checkProgress, setCheckProgress] = useState<{ done: number; total: number } | null>(
 		null,
 	);
+	const [repairResult, setRepairResult] = useState<{
+		title: string;
+		url: string;
+		alternative: string | null;
+		wayback: string;
+		reason: string;
+	} | null>(null);
+	const [summaryResult, setSummaryResult] = useState<{
+		title: string;
+		url: string;
+		summary: string;
+	} | null>(null);
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [editing, setEditing] = useState<Bookmark | null>(null);
 	const [filterCat, setFilterCat] = useState<string>("all");
@@ -378,6 +577,20 @@ export default function AdminBookmarks() {
 			{ ids, onProgress: (done, total) => setCheckProgress({ done, total }) },
 			{ onSettled: () => setCheckProgress(null) },
 		);
+	}
+
+	async function handleRepair(b: Bookmark) {
+		const r = await repairLink.mutateAsync({ title: b.title, url: b.url });
+		setRepairResult({ title: b.title, url: b.url, ...r });
+	}
+
+	async function handleSummarize(b: Bookmark) {
+		const r = await summarize.mutateAsync({
+			title: b.title,
+			description: b.description ?? undefined,
+			url: b.url,
+		});
+		setSummaryResult({ title: b.title, url: b.url, summary: r.summary });
 	}
 
 	const sensors = useSensors(
@@ -587,6 +800,18 @@ export default function AdminBookmarks() {
 												onConfirm: () => del.mutate(b.id),
 											});
 										}}
+										onRepair={() => handleRepair(b)}
+										aiDeadLinkRepair={
+											settings?.["ai.enabled"] === "true" &&
+											settings?.["ai.features.deadLinkRepair"] === "true"
+										}
+										repairPending={repairLink.isPending}
+										onSummarize={() => handleSummarize(b)}
+										aiSummary={
+											settings?.["ai.enabled"] === "true" &&
+											settings?.["ai.features.summary"] === "true"
+										}
+										summarizePending={summarize.isPending}
 									/>
 								))}
 							</SortableContext>
@@ -606,8 +831,119 @@ export default function AdminBookmarks() {
 				categories={categories}
 				open={dialogOpen}
 				onOpenChange={setDialogOpen}
+				aiEnabled={settings?.["ai.enabled"] === "true"}
+				aiAutoFill={settings?.["ai.features.autoFill"] === "true"}
+				aiTagSuggest={settings?.["ai.features.tagSuggest"] === "true"}
+				aiAutoCategorize={settings?.["ai.features.autoCategorize"] === "true"}
+				aiSummary={settings?.["ai.features.summary"] === "true"}
 			/>
 			<ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
+
+			<Dialog open={repairResult !== null} onOpenChange={(o) => !o && setRepairResult(null)}>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>AI 死链修复建议</DialogTitle>
+					</DialogHeader>
+					{repairResult && (
+						<div className="space-y-3 text-sm">
+							<div>
+								<span className="text-muted-foreground">标题：</span>
+								{repairResult.title}
+							</div>
+							<div>
+								<span className="text-muted-foreground">原链接：</span>
+								<span className="break-all">{repairResult.url}</span>
+							</div>
+							<div>
+								<span className="text-muted-foreground">AI 建议替代：</span>
+								{repairResult.alternative ? (
+									<a
+										href={repairResult.alternative}
+										target="_blank"
+										rel="noreferrer"
+										className="break-all text-primary underline"
+									>
+										{repairResult.alternative}
+									</a>
+								) : (
+									<span className="text-muted-foreground">未找到</span>
+								)}
+							</div>
+							<div>
+								<span className="text-muted-foreground">存档链接：</span>
+								<a
+									href={repairResult.wayback}
+									target="_blank"
+									rel="noreferrer"
+									className="break-all text-primary underline"
+								>
+									{repairResult.wayback}
+								</a>
+							</div>
+							{repairResult.reason && (
+								<p className="text-muted-foreground">{repairResult.reason}</p>
+							)}
+							<div className="flex justify-end gap-2 pt-1">
+								<Button variant="outline" onClick={() => setRepairResult(null)}>
+									关闭
+								</Button>
+								{repairResult.alternative && (
+									<Button
+										onClick={() => {
+											if (editing && editing.url === repairResult.url) {
+												// 若该死链正在编辑,直接回填
+											}
+											navigator.clipboard?.writeText(repairResult.alternative!);
+											toast.success("已复制替代链接");
+										}}
+									>
+										复制替代链接
+									</Button>
+								)}
+							</div>
+						</div>
+					)}
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={summaryResult !== null}
+				onOpenChange={(o) => !o && setSummaryResult(null)}
+			>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>AI 内容摘要</DialogTitle>
+					</DialogHeader>
+					{summaryResult && (
+						<div className="space-y-3 text-sm">
+							<div>
+								<span className="text-muted-foreground">标题：</span>
+								{summaryResult.title}
+							</div>
+							<div>
+								<span className="text-muted-foreground">链接：</span>
+								<span className="break-all">{summaryResult.url}</span>
+							</div>
+							<div className="rounded-lg border bg-muted/50 p-3">
+								{summaryResult.summary}
+							</div>
+							<div className="flex justify-end gap-2 pt-1">
+								<Button variant="outline" onClick={() => setSummaryResult(null)}>
+									关闭
+								</Button>
+								<Button
+									onClick={() => {
+										navigator.clipboard?.writeText(summaryResult.summary);
+										toast.success("已复制摘要");
+									}}
+								>
+									复制摘要
+								</Button>
+							</div>
+						</div>
+					)}
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

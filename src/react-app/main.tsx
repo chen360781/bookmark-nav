@@ -16,6 +16,7 @@ const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
 const AdminAppearance = lazy(() => import("./pages/admin/AdminAppearance"));
 const AdminSecurity = lazy(() => import("./pages/admin/AdminSecurity"));
 const AdminImportExport = lazy(() => import("./pages/admin/AdminImportExport"));
+const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 
 const queryClient = new QueryClient({
 	defaultOptions: {
@@ -55,7 +56,8 @@ createRoot(document.getElementById("root")!).render(
 								<Route path="settings" element={<AdminSettings />} />
 								<Route path="appearance" element={<AdminAppearance />} />
 								<Route path="security" element={<AdminSecurity />} />
-							</Route>
+								<Route path="ai" element={<AdminAI />} />
+								</Route>
 						</Routes>
 					</Suspense>
 				</BrowserRouter>
