@@ -19,7 +19,7 @@ import {
 	type ExportFolder,
 	type ParsedFolder,
 } from "../lib/netscape";
-import { extractJson, loadAISettings, runChat } from "../lib/ai";
+import { extractJson, loadAISettings, runChat, testModel } from "../lib/ai";
 
 const idParam = zValidator("param", z.object({ id: z.coerce.number().int() }));
 const reorderSchema = z.object({ ids: z.array(z.number().int()).min(1) });
@@ -755,6 +755,25 @@ ${pageText || "（无）"}`;
 			return c.json({ ok: true });
 		},
 	)
+	// ---------- AI 连接检测(用表单临时值,不依赖已保存设置) ----------
+	.post("/ai-test", async (c) => {
+		try {
+			const body = await c.req.json<{
+				provider: "builtin" | "custom";
+				apiEndpoint?: string;
+				apiKey?: string;
+				model: string;
+			}>();
+			if (body.provider !== "builtin" && body.provider !== "custom") {
+				return c.json({ ok: false, error: "provider 不合法" }, 400);
+			}
+			const result = await testModel(c.env, body);
+			if (result.ok) return c.json({ ok: true });
+			return c.json({ ok: false, error: result.error }, 400);
+		} catch (err) {
+			return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
+		}
+	})
 	// ---------- AI 用量概览(免费额度防刷 + 自定义 API 防滥用) ----------
 	.get("/ai-usage", async (c) => {
 		const db = createDb(c.env.DB);

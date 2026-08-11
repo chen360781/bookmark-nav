@@ -466,3 +466,26 @@ export function useAIUsage() {
 		refetchInterval: 30_000,
 	});
 }
+
+export type AITestConfig = {
+	provider: "builtin" | "custom";
+	apiEndpoint?: string;
+	apiKey?: string;
+	model: string;
+};
+
+export function useTestAI() {
+	return useMutation({
+		mutationFn: async (cfg: AITestConfig) => {
+			const res = await client.api.admin["ai-test"].$post({ json: cfg });
+			const body = (await res.json().catch(() => null)) as
+				| { ok: true }
+				| { ok: false; error?: string }
+				| null;
+			if (!res.ok || !body?.ok) {
+				throw new Error(body && "error" in body && body.error ? body.error : "检测失败");
+			}
+			return body;
+		},
+	});
+}

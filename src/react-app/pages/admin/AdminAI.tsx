@@ -1,14 +1,21 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Sparkles, Eye, EyeOff, FlaskConical, Zap, BarChart3 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useAdminSettings, useSaveSettings, useAIUsage } from "@/lib/admin-queries";
+import { useAdminSettings, useSaveSettings, useAIUsage, useTestAI } from "@/lib/admin-queries";
 
 // 今日免费额度软上限(仅展示预警,不拦截). Workers AI 免费版每日调用上限有限,接近时提醒
 const DAILY_SOFT_LIMIT = 1000;
+
+// 内置 Workers AI 默认模型(作为占位符,用户可自定义其它模型 id)
+const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+
+// Cloudflare Workers AI 模型列表,供用户查找可用的 model id
+const WORKERS_AI_MODELS_URL = "https://developers.cloudflare.com/workers-ai/models/";
 
 // 埋点 feature 名 -> 中文标签
 const FEATURE_LABELS: Record<string, string> = {
@@ -19,6 +26,32 @@ const FEATURE_LABELS: Record<string, string> = {
 	autoCategorize: "自动分类",
 	deadLinkRepair: "死链修复",
 };
+
+// 模型输入框(内置 / 自定义共用)
+function ModelField({
+	model,
+	onModelChange,
+	placeholder,
+	disabled,
+}: {
+	model: string;
+	onModelChange: (v: string) => void;
+	placeholder: string;
+	disabled: boolean;
+}) {
+	return (
+		<div className="space-y-2">
+			<Label htmlFor="ai-model">模型名称</Label>
+			<Input
+				id="ai-model"
+				value={model}
+				onChange={(e) => onModelChange(e.target.value)}
+				placeholder={placeholder}
+				disabled={disabled}
+			/>
+		</div>
+	);
+}
 
 const FEATURES = [
 	{
@@ -57,6 +90,7 @@ export default function AdminAI() {
 	const { data, isLoading } = useAdminSettings();
 	const save = useSaveSettings();
 	const { data: usage, isLoading: usageLoading } = useAIUsage();
+	const testAI = useTestAI();
 
 	const [enabled, setEnabled] = useState(false);
 	const [provider, setProvider] = useState<"builtin" | "custom">("builtin");
@@ -95,6 +129,21 @@ export default function AdminAI() {
 		}
 		save.mutate(payload);
 	}
+
+	const handleTest = async () => {
+		const cfg = {
+			provider,
+			apiEndpoint: apiEndpoint || undefined,
+			apiKey: apiKey || undefined,
+			model,
+		};
+		try {
+			await testAI.mutateAsync(cfg);
+			toast.success("连接成功，模型可用");
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "检测失败");
+		}
+	};
 
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
@@ -317,18 +366,58 @@ export default function AdminAI() {
 									</Button>
 								</div>
 							</div>
-							<div className="space-y-2">
-								<Label htmlFor="ai-model">模型名称</Label>
-								<Input
-									id="ai-model"
-									value={model}
-									onChange={(e) => setModel(e.target.value)}
-									placeholder="gpt-4o-mini"
-									disabled={isLoading}
-								/>
-							</div>
+							<ModelField
+								model={model}
+								onModelChange={setModel}
+								placeholder="gpt-4o-mini"
+								disabled={isLoading}
+							/>
 						</form>
 					)}
+
+					{provider === "builtin" && (
+						<form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+							<ModelField
+								model={model}
+								onModelChange={setModel}
+								placeholder={DEFAULT_MODEL}
+								disabled={isLoading}
+							/>
+							<p className="text-xs text-muted-foreground">
+								留空则使用默认模型{" "}
+								<code className="rounded bg-muted px-1 py-0.5">
+									{DEFAULT_MODEL}
+								</code>
+								。可在{" "}
+								<a
+									href={WORKERS_AI_MODELS_URL}
+									target="_blank"
+									rel="noreferrer"
+									className="text-blue-500 hover:underline"
+								>
+									Cloudflare Workers AI 模型列表
+								</a>{" "}
+								查找其它可用的 model id。
+							</p>
+						</form>
+					)}
+
+					<div className="pt-1">
+						<Button
+							type="button"
+							variant="secondary"
+							size="sm"
+							onClick={handleTest}
+							disabled={isLoading || testAI.isPending}
+							className="flex items-center gap-1.5"
+						>
+							<FlaskConical className="size-3.5" />
+							{testAI.isPending ? "检测中…" : "测试连接"}
+						</Button>
+						<p className="mt-1.5 text-xs text-muted-foreground">
+							用当前表单配置试跑一次，验证模型是否可用（不会保存设置）。
+						</p>
+					</div>
 				</CardContent>
 			</Card>
 

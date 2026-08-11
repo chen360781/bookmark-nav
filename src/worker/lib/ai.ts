@@ -120,6 +120,58 @@ export async function runChat(
 	}
 }
 
+// 用临时配置(非已保存设置)试跑一次,验证 provider / endpoint / key / model 是否可用
+export async function testModel(env: Env, cfg: {
+	provider: AIProvider;
+	apiEndpoint?: string;
+	apiKey?: string;
+	model: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+	const messages: AIMessage[] = [
+		{ role: "system", content: "你是连接测试助手,只回复 ok 两个字母。" },
+		{ role: "user", content: "ping" },
+	];
+	try {
+		if (cfg.provider === "custom") {
+			if (!cfg.apiEndpoint) return { ok: false, error: "自定义 API Endpoint 未填写" };
+			if (!cfg.apiKey) return { ok: false, error: "自定义 API Key 未填写" };
+			if (!cfg.model) return { ok: false, error: "自定义模型未填写" };
+			const res = await fetch(
+				`${cfg.apiEndpoint.replace(/\/$/, "")}/chat/completions`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${cfg.apiKey}`,
+					},
+					body: JSON.stringify({ model: cfg.model, messages, temperature: 0 }),
+					signal: AbortSignal.timeout(20000),
+				},
+			);
+			if (!res.ok) {
+				const text = await res.text().catch(() => "");
+				return { ok: false, error: `请求失败 (${res.status}): ${text.slice(0, 300)}` };
+			}
+			const body = (await res.json()) as {
+				choices?: { message?: { content?: string } }[];
+			};
+			if (!body.choices?.[0]?.message?.content) {
+				return { ok: false, error: "返回内容为空" };
+			}
+			return { ok: true };
+		}
+
+		// 内置 Workers AI
+		const model = cfg.model || DEFAULT_MODEL;
+		const result = await env.AI.run(model as any, { messages }, { signal: AbortSignal.timeout(20000) } as any);
+		const content = (result as { response?: string }).response;
+		if (!content) return { ok: false, error: "Workers AI 返回内容为空" };
+		return { ok: true };
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
 export function extractJson<T>(text: string): T {
 	// 先尝试整个文本
 	try {
