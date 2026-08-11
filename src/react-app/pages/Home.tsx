@@ -10,7 +10,6 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ThemeToggle } from "@/components/theme-toggle";
 import {
 	client,
 	bookmarkIcon,
@@ -150,7 +149,6 @@ export default function Home() {
 						/>
 					</div>
 					<div className="ml-auto flex shrink-0 items-center gap-1 sm:ml-0">
-						<ThemeToggle />
 						{auth?.authenticated ? (
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>

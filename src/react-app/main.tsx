@@ -13,6 +13,8 @@ const AdminLayout = lazy(() => import("./pages/admin/AdminLayout"));
 const AdminBookmarks = lazy(() => import("./pages/admin/AdminBookmarks"));
 const AdminCategories = lazy(() => import("./pages/admin/AdminCategories"));
 const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
+const AdminAppearance = lazy(() => import("./pages/admin/AdminAppearance"));
+const AdminSecurity = lazy(() => import("./pages/admin/AdminSecurity"));
 const AdminImportExport = lazy(() => import("./pages/admin/AdminImportExport"));
 
 const queryClient = new QueryClient({
@@ -51,6 +53,8 @@ createRoot(document.getElementById("root")!).render(
 								<Route path="categories" element={<AdminCategories />} />
 								<Route path="import-export" element={<AdminImportExport />} />
 								<Route path="settings" element={<AdminSettings />} />
+								<Route path="appearance" element={<AdminAppearance />} />
+								<Route path="security" element={<AdminSecurity />} />
 							</Route>
 						</Routes>
 					</Suspense>
