@@ -185,6 +185,7 @@ export function useFetchMetadataAI() {
 				description: string | null;
 				icon: string | null;
 				tags: string[];
+				categoryId: number | null;
 			}>;
 		},
 		onError: (e) => toast.error(e.message),

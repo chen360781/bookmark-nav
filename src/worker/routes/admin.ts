@@ -361,6 +361,8 @@ export const adminRoutes = new Hono<AppEnv>()
 			}
 
 			const pageText = [meta.title, meta.description].filter(Boolean).join("\n");
+			const categoryNames = (await db.select({ name: categories.name }).from(categories))
+				.map((r) => r.name);
 			const system =
 				"你是一个书签整理助手。请根据用户提供的网页 URL 和页面信息，提取或补全书签信息。";
 			const user = `请为以下网页生成书签信息，以 JSON 格式返回，不要包含其他内容：
@@ -368,8 +370,12 @@ export const adminRoutes = new Hono<AppEnv>()
   "title": "简短准确的标题",
   "description": "一句话中文描述（不超过 80 字）",
   "tags": ["标签1", "标签2", "标签3"],
-  "icon": "favicon 地址，通常为 /favicon.ico 或绝对 URL"
+  "icon": "favicon 地址，通常为 /favicon.ico 或绝对 URL",
+  "category": "最合适的分类名称（必须是给定分类之一，没有合适的则填 null）"
 }
+
+可选分类（只能从下列选择，无法确定时填 null）：
+${categoryNames.length ? categoryNames.join("、") : "（暂无分类）"}
 
 URL: ${url}
 页面信息：
@@ -391,12 +397,22 @@ ${pageText || "（无）"}`;
 					description?: string;
 					tags?: string[];
 					icon?: string;
+					category?: string | null;
 				}>(raw);
+				// 将 AI 推荐的分类名映射到已有分类 id
+				let categoryId: number | null = null;
+				if (parsed.category) {
+					const matched = (await db.select().from(categories)).find(
+						(c) => c.name === parsed.category,
+					);
+					categoryId = matched ? matched.id : null;
+				}
 				return c.json({
 					title: parsed.title || meta.title,
 					description: parsed.description || meta.description,
 					icon: parsed.icon || meta.icon,
 					tags: Array.isArray(parsed.tags) ? parsed.tags.filter(Boolean) : [],
+					categoryId,
 				});
 			} catch (err) {
 				console.error("AI metadata error:", err);

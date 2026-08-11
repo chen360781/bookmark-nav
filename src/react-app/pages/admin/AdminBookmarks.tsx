@@ -62,8 +62,6 @@ import {
 	useRepairLink,
 	useSummarize,
 	useSaveBookmark,
-	useSuggestCategory,
-	useSuggestTags,
 	type BookmarkPayload,
 } from "@/lib/admin-queries";
 
@@ -75,9 +73,6 @@ function BookmarkDialog({
 	onOpenChange,
 	aiEnabled,
 	aiAutoFill,
-	aiTagSuggest,
-	aiAutoCategorize,
-	aiSummary,
 }: {
 	bookmark: Bookmark | null;
 	categories: Category[];
@@ -85,26 +80,16 @@ function BookmarkDialog({
 	onOpenChange: (open: boolean) => void;
 	aiEnabled: boolean;
 	aiAutoFill: boolean;
-	aiTagSuggest: boolean;
-	aiAutoCategorize: boolean;
-	aiSummary: boolean;
 }) {
 	const save = useSaveBookmark();
 	const fetchMeta = useFetchMetadata();
 	const fetchMetaAI = useFetchMetadataAI();
-	const suggestTags = useSuggestTags();
-	const suggestCategory = useSuggestCategory();
-	const summarize = useSummarize();
-	const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
-	const [categoryReason, setCategoryReason] = useState<string>("");
 	const [form, setForm] = useState<BookmarkPayload>({ title: "", url: "" });
 	const flatCats = flattenCategoryTree(categories);
 
 	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)
 	useEffect(() => {
 		if (!open) return;
-		setSuggestedTags([]);
-		setCategoryReason("");
 		setForm(
 			bookmark
 				? {
@@ -141,49 +126,10 @@ function BookmarkDialog({
 			description: f.description || meta.description,
 			icon: f.icon || meta.icon,
 			tags: f.tags?.length ? f.tags : meta.tags,
+			categoryId: f.categoryId != null ? f.categoryId : (meta.categoryId ?? null),
 		}));
 	}
 
-	async function handleSuggestTags() {
-		if (!form.title && !form.url) return;
-		const { tags } = await suggestTags.mutateAsync({
-			title: form.title || form.url,
-			description: form.description ?? undefined,
-			url: form.url || undefined,
-		});
-		setSuggestedTags(tags);
-	}
-
-	function addSuggestedTag(tag: string) {
-		setForm((f) => ({
-			...f,
-			tags: f.tags?.includes(tag) ? f.tags : [...(f.tags ?? []), tag],
-		}));
-		setSuggestedTags((prev) => prev.filter((t) => t !== tag));
-	}
-
-	async function handleSuggestCategory() {
-		if (!form.title && !form.url) return;
-		const r = await suggestCategory.mutateAsync({
-			title: form.title || form.url,
-			description: form.description ?? undefined,
-			url: form.url || undefined,
-		});
-		if (r.categoryId != null) setForm((f) => ({ ...f, categoryId: r.categoryId! }));
-		setCategoryReason(
-			`${r.isNew ? `建议新建「${r.categoryName ?? ""}」` : `推荐「${r.categoryName ?? ""}」`}${r.reason ? `：${r.reason}` : ""}`,
-		);
-	}
-
-	async function handleSummarize() {
-		if (!form.title && !form.url) return;
-		const { summary } = await summarize.mutateAsync({
-			title: form.title || form.url,
-			description: form.description ?? undefined,
-			url: form.url || undefined,
-		});
-		setForm((f) => ({ ...f, description: summary }));
-	}
 
 	async function handleSubmit(e: FormEvent) {
 		e.preventDefault();
@@ -248,23 +194,10 @@ function BookmarkDialog({
 							value={form.description ?? ""}
 							onChange={(e) => setForm({ ...form, description: e.target.value })}
 							rows={2}
-						/>
-						{aiEnabled && aiSummary && (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={handleSummarize}
-								disabled={summarize.isPending || (!form.title && !form.url)}
-								title="使用 AI 生成一句话摘要"
-							>
-								<Wand2 className="size-4" />
-								{summarize.isPending ? "生成中…" : "AI 摘要"}
-							</Button>
-						)}
-					</div>
-					<div className="grid grid-cols-2 gap-4">
-						<div className="space-y-2">
+							/>
+							</div>
+							<div className="grid grid-cols-2 gap-4">
+							<div className="space-y-2">
 							<Label>分类</Label>
 							<Select
 								value={form.categoryId != null ? String(form.categoryId) : "none"}
@@ -284,71 +217,25 @@ function BookmarkDialog({
 									))}
 								</SelectContent>
 							</Select>
-							<div className="flex flex-wrap items-center gap-2">
-								{aiEnabled && aiAutoCategorize && (
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										onClick={handleSuggestCategory}
-										disabled={suggestCategory.isPending || (!form.title && !form.url)}
-										title="使用 AI 推荐分类"
-									>
-										<Wand2 className="size-4" />
-										{suggestCategory.isPending ? "分析中…" : "AI 分类"}
-									</Button>
-								)}
-								{categoryReason && (
-									<span className="text-xs text-muted-foreground">{categoryReason}</span>
-								)}
 							</div>
-							</div>
-						<div className="space-y-2">
+							<div className="space-y-2">
 							<Label htmlFor="bm-tags">标签(逗号分隔)</Label>
-							<div className="flex gap-2">
-								<Input
-									id="bm-tags"
-									value={(form.tags ?? []).join(", ")}
-									onChange={(e) =>
-										setForm({
-											...form,
-											tags: e.target.value
-												.split(/[,，]/)
-												.map((t) => t.trim())
-												.filter(Boolean),
-										})
-									}
-									placeholder="工具, 文档"
-								/>
-								{aiEnabled && aiTagSuggest && (
-									<Button
-										type="button"
-										variant="outline"
-										onClick={handleSuggestTags}
-										disabled={suggestTags.isPending || (!form.title && !form.url)}
-										title="使用 AI 推荐标签"
-									>
-										<Wand2 className="size-4" />
-										{suggestTags.isPending ? "推荐中…" : "AI 推荐"}
-									</Button>
-								)}
+							<Input
+								id="bm-tags"
+								value={(form.tags ?? []).join(", ")}
+								onChange={(e) =>
+									setForm({
+										...form,
+										tags: e.target.value
+											.split(/[,，]/)
+											.map((t) => t.trim())
+											.filter(Boolean),
+									})
+								}
+								placeholder="工具, 文档"
+							/>
 							</div>
-							{suggestedTags.length > 0 && (
-								<div className="flex flex-wrap gap-1.5">
-									{suggestedTags.map((t) => (
-										<button
-											key={t}
-											type="button"
-											onClick={() => addSuggestedTag(t)}
-											className="rounded-full border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-										>
-											+ {t}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-					</div>
+							</div>
 					<div className="space-y-2">
 						<Label htmlFor="bm-icon">图标地址(留空自动取 favicon)</Label>
 						<Input
@@ -833,9 +720,6 @@ export default function AdminBookmarks() {
 				onOpenChange={setDialogOpen}
 				aiEnabled={settings?.["ai.enabled"] === "true"}
 				aiAutoFill={settings?.["ai.features.autoFill"] === "true"}
-				aiTagSuggest={settings?.["ai.features.tagSuggest"] === "true"}
-				aiAutoCategorize={settings?.["ai.features.autoCategorize"] === "true"}
-				aiSummary={settings?.["ai.features.summary"] === "true"}
 			/>
 			<ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
 
