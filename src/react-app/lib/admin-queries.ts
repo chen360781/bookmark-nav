@@ -165,7 +165,7 @@ export function useFetchMetadata() {
 			return res.json() as Promise<{
 				title: string | null;
 				description: string | null;
-				icon: string | null;
+
 			}>;
 		},
 		onError: (e) => toast.error(e.message),
@@ -183,7 +183,7 @@ export function useFetchMetadataAI() {
 			return res.json() as Promise<{
 				title: string | null;
 				description: string | null;
-				icon: string | null;
+
 				tags: string[];
 				categoryId: number | null;
 			}>;

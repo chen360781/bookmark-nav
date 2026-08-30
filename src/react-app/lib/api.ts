@@ -53,12 +53,25 @@ export type Bookmark = {
 	tags: string[];
 };
 
-// 书签图标:优先自定义,否则取站点 favicon
-export function bookmarkIcon(b: Pick<Bookmark, "icon" | "url">): string {
-	if (b.icon) return b.icon;
-	try {
-		return `${new URL(b.url).origin}/favicon.ico`;
-	} catch {
-		return "";
+// 书签图标候选:优先自定义 icon,其次按后台配置的图标服务模板按域名生成
+export function bookmarkIconCandidates(
+	b: Pick<Bookmark, "icon" | "url">,
+	iconService?: string,
+): string[] {
+	const sources: string[] = [];
+	if (b.icon) sources.push(b.icon);
+	if (iconService) {
+		try {
+			const { hostname } = new URL(b.url);
+			sources.push(iconService.split("{domain}").join(hostname));
+		} catch {
+			// 非法 URL:跳过服务模板
+		}
 	}
+	return [...new Set(sources)];
+}
+
+// 书签图标主候选项(保持向后兼容)
+export function bookmarkIcon(b: Pick<Bookmark, "icon" | "url">, iconService?: string): string {
+	return bookmarkIconCandidates(b, iconService)[0] ?? "";
 }

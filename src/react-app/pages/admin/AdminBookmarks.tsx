@@ -46,8 +46,9 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { bookmarkIcon, flattenCategoryTree, type Bookmark, type Category } from "@/lib/api";
+import { flattenCategoryTree, type Bookmark, type Category } from "@/lib/api";
 import { ConfirmDialog, type ConfirmState } from "@/components/confirm-dialog";
+import { BookmarkFavicon } from "@/components/bookmark-favicon";
 import {
 	useAdminBookmarks,
 	useAdminCategories,
@@ -113,7 +114,7 @@ function BookmarkDialog({
 			...f,
 			title: f.title || meta.title || "",
 			description: f.description || meta.description,
-			icon: f.icon || meta.icon,
+
 		}));
 	}
 
@@ -124,7 +125,7 @@ function BookmarkDialog({
 			...f,
 			title: f.title || meta.title || "",
 			description: f.description || meta.description,
-			icon: f.icon || meta.icon,
+
 			tags: f.tags?.length ? f.tags : meta.tags,
 			categoryId: f.categoryId != null ? f.categoryId : (meta.categoryId ?? null),
 		}));
@@ -237,7 +238,7 @@ function BookmarkDialog({
 							</div>
 							</div>
 					<div className="space-y-2">
-						<Label htmlFor="bm-icon">图标地址(留空自动取 favicon)</Label>
+						<Label htmlFor="bm-icon">图标地址(留空则按「系统设置 → 图标获取」自动生成)</Label>
 						<Input
 							id="bm-icon"
 							value={form.icon ?? ""}
@@ -290,6 +291,7 @@ function SortableRow({
 	onSummarize,
 	aiSummary,
 	summarizePending,
+	iconService,
 }: {
 	bookmark: Bookmark;
 	categoryName: string;
@@ -303,10 +305,10 @@ function SortableRow({
 	onSummarize: () => void;
 	aiSummary: boolean;
 	summarizePending: boolean;
+	iconService?: string;
 }) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
 		useSortable({ id: bookmark.id });
-	const icon = bookmarkIcon(bookmark);
 	return (
 		<TableRow
 			ref={setNodeRef}
@@ -321,16 +323,11 @@ function SortableRow({
 			</TableCell>
 			<TableCell>
 				<div className="flex items-center gap-2">
-					{icon && (
-						<img
-							src={icon}
-							alt=""
-							className="size-4 shrink-0"
-							onError={(e) => {
-								e.currentTarget.style.display = "none";
-							}}
-						/>
-					)}
+					<BookmarkFavicon
+						bookmark={bookmark}
+						iconService={iconService}
+						className="size-4 shrink-0"
+					/>
 					<span className="max-w-52 truncate font-medium">{bookmark.title}</span>
 					{bookmark.status === "dead" && (
 						<Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-xs">
@@ -698,8 +695,9 @@ export default function AdminBookmarks() {
 											settings?.["ai.enabled"] === "true" &&
 											settings?.["ai.features.summary"] === "true"
 										}
-										summarizePending={summarize.isPending}
-									/>
+summarizePending={summarize.isPending}
+									iconService={settings?.["icon.service"]}
+								/>
 								))}
 							</SortableContext>
 						</TableBody>

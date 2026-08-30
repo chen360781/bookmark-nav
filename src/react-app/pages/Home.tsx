@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Globe, Lock, Pin, Search, Settings, LogOut, User, Sparkles, Loader2 } from "lucide-react";
+import { Lock, Pin, Search, Settings, LogOut, User, Sparkles, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,15 +13,23 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
 	client,
-	bookmarkIcon,
 	flattenCategoryTree,
 	type Bookmark,
 	type Category,
 } from "@/lib/api";
+import { BookmarkFavicon } from "@/components/bookmark-favicon";
 import { useAuthStatus, useLogout, useNavData, useSiteSettings, useAISearchConfig } from "@/lib/queries";
 
-function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
-	const icon = bookmarkIcon(bookmark);
+function BookmarkCard({
+	bookmark,
+	compact = false,
+	iconService,
+}: {
+	bookmark: Bookmark;
+	compact?: boolean;
+	iconService?: string;
+}) {
+
 	return (
 		<a
 			href={bookmark.url}
@@ -33,26 +41,36 @@ function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
 					param: { id: String(bookmark.id) },
 				});
 			}}
-			className="group flex items-start gap-3 rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+			className={
+				compact
+					? "group flex items-center gap-2 rounded-lg border bg-card p-2 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+					: "group flex items-start gap-3 rounded-xl border bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+			}
 		>
-			<div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
-				{icon ? (
-					<img
-						src={icon}
-						alt=""
-						className="size-6"
-						loading="lazy"
-						onError={(e) => {
-							e.currentTarget.style.display = "none";
-						}}
-					/>
-				) : (
-					<Globe className="size-5 text-muted-foreground" />
-				)}
+			<div
+				className={
+					compact
+						? "flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted"
+						: "flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted"
+				}
+			>
+				<BookmarkFavicon
+					bookmark={bookmark}
+					iconService={iconService}
+					className={
+						compact ? "size-4.5 text-muted-foreground" : "size-6 text-muted-foreground"
+					}
+				/>
 			</div>
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5">
-					<span className="truncate font-medium group-hover:text-primary">
+					<span
+						className={
+							compact
+								? "truncate text-sm font-medium group-hover:text-primary"
+								: "truncate font-medium group-hover:text-primary"
+						}
+					>
 						{bookmark.title}
 					</span>
 					{bookmark.isPinned && <Pin className="size-3.5 shrink-0 text-amber-500" />}
@@ -60,12 +78,12 @@ function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
 						<Lock className="size-3.5 shrink-0 text-muted-foreground" />
 					)}
 				</div>
-				{bookmark.description && (
+				{!compact && bookmark.description && (
 					<p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
 						{bookmark.description}
 					</p>
 				)}
-				{bookmark.tags.length > 0 && (
+				{!compact && bookmark.tags.length > 0 && (
 					<div className="mt-1.5 flex flex-wrap gap-1">
 						{bookmark.tags.map((t) => (
 							<Badge key={t} variant="secondary" className="px-1.5 py-0 text-xs">
@@ -91,6 +109,8 @@ export default function Home() {
 	const [aiLoading, setAiLoading] = useState(false);
 
 	const siteName = site?.siteName || "书签导航";
+	// 紧凑模式:由后台「外观设置」持久化到数据库,对所有访客全局生效
+	const compact = site?.["appearance.compact"] === "1";
 
 	// AI 语义搜索(请求后端 /api/public/search/semantic)
 	async function runAISearch(q: string) {
@@ -116,8 +136,19 @@ export default function Home() {
 		if (!aiSearch || !keyword.trim()) setAiResults(null);
 	}, [aiSearch, keyword]);
 
-	// 实际展示结果:AI 搜索优先,否则本地过滤
-	const displayBookmarks = aiResults ?? (data?.bookmarks ?? []);
+	// 实际展示结果:AI 搜索优先,否则按关键词本地过滤(标题/描述/网址/标签)
+	const displayBookmarks = useMemo(() => {
+		if (aiResults !== null) return aiResults;
+		const all = data?.bookmarks ?? [];
+		const q = keyword.trim().toLowerCase();
+		if (!q) return all;
+		return all.filter((b) =>
+			[b.title, b.description ?? "", b.url, ...b.tags]
+				.join(" ")
+				.toLowerCase()
+				.includes(q),
+		);
+	}, [aiResults, keyword, data]);
 	const aiActive = aiSearch && aiResults !== null;
 
 	// 分类树按深度优先拍平成小节,子分类标题显示父级路径前缀(超过两级省略为 … / 上级)
@@ -208,6 +239,7 @@ export default function Home() {
 							<Loader2 className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
 						)}
 					</div>
+
 					{aiConfig?.semanticSearch && (
 						<div className="flex shrink-0 items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-2">
 							<Sparkles
@@ -229,8 +261,17 @@ export default function Home() {
 					<p className="py-20 text-center text-destructive">加载失败,请刷新重试</p>
 				)}
 				{grouped.map(({ category, parentPath, items }) => (
-					<section key={category?.id ?? "uncategorized"} className="mb-10">
-						<h2 className="mb-4 flex items-center gap-2 text-base font-semibold">
+					<section
+						key={category?.id ?? "uncategorized"}
+						className={compact ? "mb-6" : "mb-10"}
+					>
+						<h2
+							className={
+								compact
+									? "mb-2 flex items-center gap-2 text-sm font-semibold"
+									: "mb-4 flex items-center gap-2 text-base font-semibold"
+							}
+						>
 							{category?.icon && <span>{category.icon}</span>}
 							{parentPath && (
 								<span className="font-normal text-muted-foreground">
@@ -245,9 +286,20 @@ export default function Home() {
 								{items.length}
 							</span>
 						</h2>
-						<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+						<div
+							className={
+								compact
+									? "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
+									: "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+							}
+						>
 							{items.map((b) => (
-								<BookmarkCard key={b.id} bookmark={b} />
+								<BookmarkCard
+									key={b.id}
+									bookmark={b}
+									compact={compact}
+									iconService={site?.["icon.service"]}
+								/>
 							))}
 						</div>
 					</section>

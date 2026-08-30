@@ -151,12 +151,7 @@ async function fetchMetadata(url: string) {
 	const description =
 		pick(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i) ??
 		pick(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
-	let icon =
-		pick(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i) ??
-		pick(/<link[^>]+href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i);
-	const origin = new URL(res.url || url).origin;
-	icon = icon ? new URL(icon, origin).href : `${origin}/favicon.ico`;
-	return { title: decode(title), description: decode(description), icon };
+	return { title: decode(title), description: decode(description) };
 }
 
 export const adminRoutes = new Hono<AppEnv>()
@@ -353,7 +348,7 @@ export const adminRoutes = new Hono<AppEnv>()
 			}
 
 			const { url } = c.req.valid("json");
-			let meta: { title: string | null; description: string | null; icon: string | null };
+			let meta: { title: string | null; description: string | null };
 			try {
 				meta = await fetchMetadata(url);
 			} catch {
@@ -370,7 +365,7 @@ export const adminRoutes = new Hono<AppEnv>()
   "title": "简短准确的标题",
   "description": "一句话中文描述（不超过 80 字）",
   "tags": ["标签1", "标签2", "标签3"],
-  "icon": "favicon 地址，通常为 /favicon.ico 或绝对 URL",
+
   "category": "最合适的分类名称（必须是给定分类之一，没有合适的则填 null）"
 }
 
@@ -396,7 +391,7 @@ ${pageText || "（无）"}`;
 					title?: string;
 					description?: string;
 					tags?: string[];
-					icon?: string;
+
 					category?: string | null;
 				}>(raw);
 				// 将 AI 推荐的分类名映射到已有分类 id
@@ -410,7 +405,7 @@ ${pageText || "（无）"}`;
 				return c.json({
 					title: parsed.title || meta.title,
 					description: parsed.description || meta.description,
-					icon: parsed.icon || meta.icon,
+
 					tags: Array.isArray(parsed.tags) ? parsed.tags.filter(Boolean) : [],
 					categoryId,
 				});
@@ -421,7 +416,7 @@ ${pageText || "（无）"}`;
 						error: "AI 分析失败，已回退到普通抓取结果",
 						title: meta.title,
 						description: meta.description,
-						icon: meta.icon,
+
 						tags: [],
 					},
 					500,
