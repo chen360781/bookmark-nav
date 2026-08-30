@@ -21,6 +21,12 @@ export type AISettings = {
 
 const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
+// AI 请求超时。上游挂起会一直占用本次请求直至 Worker 被强制回收,
+// 且 runChat 可由匿名接口(语义搜索)触发,必须显式中断。
+const AI_TIMEOUT_MS = 30_000;
+// 连接测试只做一次短探测,超时可以更激进
+const AI_TEST_TIMEOUT_MS = 20_000;
+
 export async function loadAISettings(db: Db): Promise<AISettings> {
 	const rows = await db
 		.select({ key: settings.key, value: settings.value })
@@ -47,6 +53,12 @@ export async function loadAISettings(db: Db): Promise<AISettings> {
 }
 
 export type AIMessage = { role: "system" | "user"; content: string };
+
+// Workers AI 的 model 形参是固定的模型 id 联合类型,但运行期允许传自定义模型,
+// 这里集中收敛这一处断言,避免散落 any
+type AiModel = Parameters<Ai["run"]>[0];
+type AiOptions = Parameters<Ai["run"]>[2];
+const asAiModel = (model: string) => model as AiModel;
 
 export async function runChat(
 	env: Env,
@@ -81,6 +93,7 @@ export async function runChat(
 					messages,
 					temperature: 0.2,
 				}),
+				signal: AbortSignal.timeout(AI_TIMEOUT_MS),
 			});
 			if (!res.ok) {
 				const text = await res.text().catch(() => "");
@@ -96,7 +109,9 @@ export async function runChat(
 
 		// 内置 Workers AI
 		const model = settings.model || DEFAULT_MODEL;
-		const result = await env.AI.run(model as any, { messages });
+		const result = await env.AI.run(asAiModel(model), { messages }, {
+			signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+		} as AiOptions);
 		const content = (result as { response?: string }).response;
 		if (!content) throw new Error("Workers AI 返回内容为空");
 		return content;
@@ -145,7 +160,7 @@ export async function testModel(env: Env, cfg: {
 						Authorization: `Bearer ${cfg.apiKey}`,
 					},
 					body: JSON.stringify({ model: cfg.model, messages, temperature: 0 }),
-					signal: AbortSignal.timeout(20000),
+					signal: AbortSignal.timeout(AI_TEST_TIMEOUT_MS),
 				},
 			);
 			if (!res.ok) {
@@ -163,7 +178,11 @@ export async function testModel(env: Env, cfg: {
 
 		// 内置 Workers AI
 		const model = cfg.model || DEFAULT_MODEL;
-		const result = await env.AI.run(model as any, { messages }, { signal: AbortSignal.timeout(20000) } as any);
+		const result = await env.AI.run(
+			asAiModel(model),
+			{ messages },
+			{ signal: AbortSignal.timeout(AI_TEST_TIMEOUT_MS) } as AiOptions,
+		);
 		const content = (result as { response?: string }).response;
 		if (!content) return { ok: false, error: "Workers AI 返回内容为空" };
 		return { ok: true };

@@ -1,11 +1,21 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { createDb, type Db } from "../db/client";
 import { bookmarks, bookmarkTags, categories, settings, tags } from "../db/schema";
 import type { AppEnv } from "../lib/types";
 import { extractJson, loadAISettings, runChat } from "../lib/ai";
+import { clientIp, consumeRateLimit, pruneRateLimits } from "../lib/rate-limit";
+
+// 语义搜索匿名可调用,且每次请求都会触发一次 LLM 推理,必须限流以防 AI 额度被刷爆
+const SEMANTIC_SEARCH_LIMIT = 30;
+const SEMANTIC_SEARCH_WINDOW_MS = 60 * 60_000;
+
+// LIKE 里 % 与 _ 是通配符,用户输入需先转义才能按字面量匹配
+function escapeLike(s: string): string {
+	return s.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
 
 // 未登录只能看 public;登录后 public + private
 function visibleBookmarks(authed: boolean) {
@@ -54,6 +64,16 @@ async function attachTags<T extends { id: number }>(db: Db, rows: T[]) {
 	return rows.map((r) => ({ ...r, tags: map.get(r.id) ?? [] }));
 }
 
+// 允许匿名读取的站点配置键。
+// settings 表里还存着 ai.apiKey / ai.apiEndpoint 等敏感配置,必须对下发的键做白名单,
+// 否则任何访客访问 /api/public/site 都能拿到 AI 密钥明文。
+const PUBLIC_SETTING_KEYS = new Set([
+	"siteName",
+	"footer",
+	"icon.service",
+	"appearance.compact",
+]);
+
 const bookmarkColumns = {
 	id: bookmarks.id,
 	title: bookmarks.title,
@@ -73,7 +93,8 @@ export const publicRoutes = new Hono<AppEnv>()
 	.get("/site", async (c) => {
 		const db = createDb(c.env.DB);
 		const rows = await db.select().from(settings);
-		return c.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+		const safe = rows.filter((r) => PUBLIC_SETTING_KEYS.has(r.key));
+		return c.json(Object.fromEntries(safe.map((r) => [r.key, r.value])));
 	})
 	// AI 可用性(公开,供前端决定是否显示语义搜索入口)
 	.get("/ai-config", async (c) => {
@@ -115,7 +136,7 @@ export const publicRoutes = new Hono<AppEnv>()
 		async (c) => {
 			const db = createDb(c.env.DB);
 			const authed = !!c.get("user");
-			const kw = `%${c.req.valid("query").q}%`;
+			const kw = `%${escapeLike(c.req.valid("query").q)}%`;
 			const allCats = await db.select().from(categories);
 			const allowed = allowedCategoryIds(allCats, authed);
 			const rows = await db
@@ -125,9 +146,9 @@ export const publicRoutes = new Hono<AppEnv>()
 					and(
 						visibleBookmarks(authed),
 						or(
-							like(bookmarks.title, kw),
-							like(bookmarks.description, kw),
-							like(bookmarks.url, kw),
+							sql`${bookmarks.title} LIKE ${kw} ESCAPE '\'`,
+							sql`${bookmarks.description} LIKE ${kw} ESCAPE '\'`,
+							sql`${bookmarks.url} LIKE ${kw} ESCAPE '\'`,
 						),
 					),
 				)
@@ -149,6 +170,17 @@ export const publicRoutes = new Hono<AppEnv>()
 			const aiSettings = await loadAISettings(db);
 			if (!aiSettings.enabled || !aiSettings.features.semanticSearch) {
 				return c.json({ error: "AI 语义搜索未启用" }, 400);
+			}
+			// 匿名可调用 + 每次触发一次 LLM 推理:先限流,避免 AI 额度被恶意刷爆
+			const rl = await consumeRateLimit(
+				db,
+				`semantic:${clientIp(c)}`,
+				SEMANTIC_SEARCH_LIMIT,
+				SEMANTIC_SEARCH_WINDOW_MS,
+			);
+			if (!rl.ok) {
+				await pruneRateLimits(db, SEMANTIC_SEARCH_WINDOW_MS);
+				return c.json({ error: "请求过于频繁,请稍后再试" }, 429);
 			}
 			const query = c.req.valid("query").q;
 			const authed = !!c.get("user");
@@ -209,10 +241,30 @@ export const publicRoutes = new Hono<AppEnv>()
 		zValidator("param", z.object({ id: z.coerce.number().int() })),
 		async (c) => {
 			const db = createDb(c.env.DB);
+			const id = c.req.valid("param").id;
+			const authed = !!c.get("user");
+			// 只统计访客本就能看到的书签:否则可用响应差异探测私密书签是否存在
+			const allCats = await db.select().from(categories);
+			const allowed = allowedCategoryIds(allCats, authed);
+			const [row] = await db
+				.select({
+					id: bookmarks.id,
+					categoryId: bookmarks.categoryId,
+					visibility: bookmarks.visibility,
+				})
+				.from(bookmarks)
+				.where(eq(bookmarks.id, id))
+				.limit(1);
+			// 不存在或无权限时同样返回 ok,不泄露私密书签的存在性
+			if (!row) return c.json({ ok: true });
+			if (row.visibility !== "public" && !authed) return c.json({ ok: true });
+			if (row.categoryId !== null && !allowed.has(row.categoryId)) {
+				return c.json({ ok: true });
+			}
 			await db
 				.update(bookmarks)
 				.set({ clickCount: sql`${bookmarks.clickCount} + 1` })
-				.where(eq(bookmarks.id, c.req.valid("param").id));
+				.where(eq(bookmarks.id, id));
 			return c.json({ ok: true });
 		},
 	);

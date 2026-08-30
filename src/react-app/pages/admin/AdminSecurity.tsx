@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,13 +33,10 @@ export default function AdminSecurity() {
 
 	const { data: auth } = useAuthStatus();
 	const changeUsername = useChangeUsername();
-	const [username, setUsername] = useState("");
+	// 以服务端用户名为基准,draft 保存未提交的编辑,避免用 effect 回填 state
+	const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
 	const [usernamePassword, setUsernamePassword] = useState("");
-
-	// 首次加载回填当前用户名
-	useEffect(() => {
-		if (auth?.user?.username) setUsername(auth.user.username);
-	}, [auth?.user?.username]);
+	const username = usernameDraft ?? auth?.user?.username ?? "";
 
 	function handleChangeUsername(e: FormEvent) {
 		e.preventDefault();
@@ -63,7 +60,7 @@ export default function AdminSecurity() {
 							<Input
 								id="username"
 								value={username}
-								onChange={(e) => setUsername(e.target.value)}
+								onChange={(e) => setUsernameDraft(e.target.value)}
 								maxLength={50}
 								required
 							/>

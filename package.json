@@ -50,7 +50,7 @@
   "scripts": {
     "build": "node scripts/prepare-deploy-config.mjs && tsc -b && vite build",
     "cf-typegen": "wrangler types",
-    "check": "tsc && vite build && wrangler deploy --dry-run",
+    "check": "tsc -b && vite build && wrangler deploy --dry-run",
     "db:migrate": "wrangler d1 migrations apply bookmark-nav-db --remote",
     "deploy": "npm run db:migrate && wrangler deploy",
     "dev": "vite",

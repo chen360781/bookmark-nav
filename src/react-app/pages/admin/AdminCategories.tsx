@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
 	DndContext,
 	PointerSensor,
@@ -79,25 +79,33 @@ function CategoryDialog({
 		);
 	})();
 
-	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)
-	useEffect(() => {
-		if (!open) return;
-		setForm(
-			category
-				? {
-						name: category.name,
-						icon: category.icon,
-						parentId: category.parentId,
-						visibility: category.visibility,
-					}
-				: { name: "", parentId: null, visibility: "public" },
-		);
-	}, [open, category]);
+	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)。
+	// 用渲染期派生代替 effect:effect 会额外触发一次渲染,且被 lint 规则禁止。
+	const [resetToken, setResetToken] = useState({ open, category });
+	if (resetToken.open !== open || resetToken.category !== category) {
+		setResetToken({ open, category });
+		if (open) {
+			setForm(
+				category
+					? {
+							name: category.name,
+							icon: category.icon,
+							parentId: category.parentId,
+							visibility: category.visibility,
+						}
+					: { name: "", parentId: null, visibility: "public" },
+			);
+		}
+	}
 
 	async function handleSubmit(e: FormEvent) {
 		e.preventDefault();
-		await save.mutateAsync({ id: category?.id, data: form });
-		onOpenChange(false);
+		try {
+			await save.mutateAsync({ id: category?.id, data: form });
+			onOpenChange(false);
+		} catch {
+			// 失败时保持弹窗打开,错误提示由 mutation 的 onError 负责
+		}
 	}
 
 	return (
@@ -239,9 +247,12 @@ export default function AdminCategories() {
 	const [selected, setSelected] = useState<Set<number>>(new Set());
 	const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
-	const categories: Category[] = data?.categories ?? [];
+	const categories: Category[] = useMemo(
+		() => (data?.categories ?? []) as Category[],
+		[data],
+	);
 	// 按树层级拍平展示(子分类缩进),拖拽排序作用于同层相对顺序
-	const flat = flattenCategoryTree(categories);
+	const flat = useMemo(() => flattenCategoryTree(categories), [categories]);
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
 	);

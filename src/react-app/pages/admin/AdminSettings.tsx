@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,18 +16,13 @@ const iconServicePresets = [
 export default function AdminSettings() {
 	const { data, isLoading } = useAdminSettings();
 	const save = useSaveSettings();
-	const [siteName, setSiteName] = useState("");
-	const [footer, setFooter] = useState("");
-	const [iconService, setIconService] = useState("");
-
-	// 首次加载回填
-	useEffect(() => {
-		if (data) {
-			setSiteName(data.siteName ?? "");
-			setFooter(data.footer ?? "");
-			setIconService(data["icon.service"] ?? "");
-		}
-	}, [data]);
+	// 以已保存配置为基准,draft 只记录用户改动过的字段,避免用 effect 回填 state
+	const [draft, setDraft] = useState<Record<string, string>>({});
+	const siteName = draft.siteName ?? data?.siteName ?? "";
+	const footer = draft.footer ?? data?.footer ?? "";
+	const iconService = draft["icon.service"] ?? data?.["icon.service"] ?? "";
+	const setField = (key: string, value: string) =>
+		setDraft((prev) => ({ ...prev, [key]: value }));
 
 	function handleSubmit(e: FormEvent) {
 		e.preventDefault();
@@ -53,7 +48,7 @@ export default function AdminSettings() {
 							<Input
 								id="site-name"
 								value={siteName}
-								onChange={(e) => setSiteName(e.target.value)}
+								onChange={(e) => setField("siteName", e.target.value)}
 								placeholder="书签导航"
 								disabled={isLoading}
 							/>
@@ -63,7 +58,7 @@ export default function AdminSettings() {
 							<Textarea
 								id="site-footer"
 								value={footer}
-								onChange={(e) => setFooter(e.target.value)}
+								onChange={(e) => setField("footer", e.target.value)}
 								rows={2}
 								disabled={isLoading}
 							/>
@@ -88,7 +83,7 @@ export default function AdminSettings() {
 							<Input
 								id="icon-service"
 								value={iconService}
-								onChange={(e) => setIconService(e.target.value)}
+								onChange={(e) => setField("icon.service", e.target.value)}
 								placeholder="https://favicon.im/{domain}"
 								disabled={isLoading}
 							/>
@@ -100,7 +95,7 @@ export default function AdminSettings() {
 									type="button"
 									variant="outline"
 									size="sm"
-									onClick={() => setIconService(value)}
+									onClick={() => setField("icon.service", value)}
 								>
 									{label}
 								</Button>

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Sparkles, Eye, EyeOff, FlaskConical, Zap, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -92,28 +92,23 @@ export default function AdminAI() {
 	const { data: usage, isLoading: usageLoading } = useAIUsage();
 	const testAI = useTestAI();
 
-	const [enabled, setEnabled] = useState(false);
-	const [provider, setProvider] = useState<"builtin" | "custom">("builtin");
-	const [apiEndpoint, setApiEndpoint] = useState("");
-	const [apiKey, setApiKey] = useState("");
-	const [model, setModel] = useState("");
 	const [showKey, setShowKey] = useState(false);
-	const [features, setFeatures] = useState<Record<string, boolean>>({});
+	// 以已保存配置为基准,draft 只记录用户改动过的字段,避免用 effect 回填 state
+	const [draft, setDraft] = useState<Record<string, string>>({});
+	const [draftFeatures, setDraftFeatures] = useState<Record<string, boolean>>({});
+	const pick = (key: string, fallback = "") => draft[key] ?? data?.[key] ?? fallback;
+	const setField = (key: string, value: string) =>
+		setDraft((prev) => ({ ...prev, [key]: value }));
 
-	useEffect(() => {
-		if (data) {
-			setEnabled(data["ai.enabled"] === "true");
-			setProvider((data["ai.provider"] as "builtin" | "custom") ?? "builtin");
-			setApiEndpoint(data["ai.apiEndpoint"] ?? "");
-			setApiKey(data["ai.apiKey"] ?? "");
-			setModel(data["ai.model"] ?? "");
-			const f: Record<string, boolean> = {};
-			for (const feat of FEATURES) {
-				f[feat.key] = data[feat.key] === "true";
-			}
-			setFeatures(f);
-		}
-	}, [data]);
+	const enabled = pick("ai.enabled") === "true";
+	const provider = pick("ai.provider", "builtin") as "builtin" | "custom";
+	const apiEndpoint = pick("ai.apiEndpoint");
+	const apiKey = pick("ai.apiKey");
+	const model = pick("ai.model");
+	const features: Record<string, boolean> = {};
+	for (const feat of FEATURES) {
+		features[feat.key] = draftFeatures[feat.key] ?? data?.[feat.key] === "true";
+	}
 
 	function handleSubmit(e: FormEvent) {
 		e.preventDefault();
@@ -285,7 +280,7 @@ export default function AdminAI() {
 					<Switch
 						id="ai-enabled"
 						checked={enabled}
-						onCheckedChange={setEnabled}
+						onCheckedChange={(v) => setField("ai.enabled", String(v))}
 						disabled={isLoading}
 					/>
 				</CardContent>
@@ -303,7 +298,7 @@ export default function AdminAI() {
 							type="button"
 							size="sm"
 							variant={provider === "builtin" ? "default" : "outline"}
-							onClick={() => setProvider("builtin")}
+							onClick={() => setField("ai.provider", "builtin")}
 							className="flex items-center gap-1.5"
 						>
 							<Zap className="size-3.5" />
@@ -313,7 +308,7 @@ export default function AdminAI() {
 							type="button"
 							size="sm"
 							variant={provider === "custom" ? "default" : "outline"}
-							onClick={() => setProvider("custom")}
+							onClick={() => setField("ai.provider", "custom")}
 							className="flex items-center gap-1.5"
 						>
 							<FlaskConical className="size-3.5" />
@@ -333,7 +328,7 @@ export default function AdminAI() {
 								<Input
 									id="ai-endpoint"
 									value={apiEndpoint}
-									onChange={(e) => setApiEndpoint(e.target.value)}
+									onChange={(e) => setField("ai.apiEndpoint", e.target.value)}
 									placeholder="https://api.openai.com/v1"
 									disabled={isLoading}
 								/>
@@ -345,7 +340,7 @@ export default function AdminAI() {
 										id="ai-key"
 										type={showKey ? "text" : "password"}
 										value={apiKey}
-										onChange={(e) => setApiKey(e.target.value)}
+										onChange={(e) => setField("ai.apiKey", e.target.value)}
 										placeholder="sk-••••••••"
 										disabled={isLoading}
 										className="flex-1"
@@ -368,7 +363,7 @@ export default function AdminAI() {
 							</div>
 							<ModelField
 								model={model}
-								onModelChange={setModel}
+								onModelChange={(v) => setField("ai.model", v)}
 								placeholder="gpt-4o-mini"
 								disabled={isLoading}
 							/>
@@ -379,7 +374,7 @@ export default function AdminAI() {
 						<form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
 							<ModelField
 								model={model}
-								onModelChange={setModel}
+								onModelChange={(v) => setField("ai.model", v)}
 								placeholder={DEFAULT_MODEL}
 								disabled={isLoading}
 							/>
@@ -445,7 +440,7 @@ export default function AdminAI() {
 								id={feat.key}
 								checked={features[feat.key] ?? false}
 								onCheckedChange={(v) =>
-									setFeatures((prev) => ({ ...prev, [feat.key]: v }))
+									setDraftFeatures((prev) => ({ ...prev, [feat.key]: v }))
 								}
 								disabled={isLoading || !enabled}
 							/>

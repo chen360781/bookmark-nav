@@ -12,6 +12,8 @@ export const users = sqliteTable("users", {
 	id: integer("id").primaryKey({ autoIncrement: true }),
 	username: text("username").notNull().unique(),
 	passwordHash: text("password_hash").notNull(),
+	// 改密码时自增,用于让此前签发的 JWT 立即失效
+	tokenVersion: integer("token_version").notNull().default(0),
 	createdAt: integer("created_at", { mode: "timestamp" })
 		.notNull()
 		.default(sql`(unixepoch())`),
@@ -88,6 +90,15 @@ export const bookmarkTags = sqliteTable(
 export const settings = sqliteTable("settings", {
 	key: text("key").primaryKey(),
 	value: text("value").notNull(),
+});
+
+// 固定窗口限流计数(登录防爆破、匿名 AI 接口防刷)
+export const rateLimits = sqliteTable("rate_limits", {
+	key: text("key").primaryKey(),
+	count: integer("count").notNull().default(0),
+	windowStart: integer("window_start", { mode: "timestamp" })
+		.notNull()
+		.default(sql`(unixepoch())`),
 });
 
 // AI 调用用量记录(免费额度防刷 + 自定义 API 防滥用)

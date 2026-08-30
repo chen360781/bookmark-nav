@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
 	DndContext,
 	PointerSensor,
@@ -24,7 +24,6 @@ import {
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
-	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,24 +87,28 @@ function BookmarkDialog({
 	const [form, setForm] = useState<BookmarkPayload>({ title: "", url: "" });
 	const flatCats = flattenCategoryTree(categories);
 
-	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)
-	useEffect(() => {
-		if (!open) return;
-		setForm(
-			bookmark
-				? {
-						title: bookmark.title,
-						url: bookmark.url,
-						description: bookmark.description,
-						icon: bookmark.icon,
-						categoryId: bookmark.categoryId,
-						isPinned: bookmark.isPinned,
-						visibility: bookmark.visibility,
-						tags: bookmark.tags,
-					}
-				: { title: "", url: "", visibility: "public" },
-		);
-	}, [open, bookmark]);
+	// 弹窗打开时同步表单初始值(open 由父组件控制,不能依赖 onOpenChange 回调)。
+	// 用渲染期派生代替 effect:effect 会额外触发一次渲染,且被 lint 规则禁止。
+	const [resetToken, setResetToken] = useState({ open, bookmark });
+	if (resetToken.open !== open || resetToken.bookmark !== bookmark) {
+		setResetToken({ open, bookmark });
+		if (open) {
+			setForm(
+				bookmark
+					? {
+							title: bookmark.title,
+							url: bookmark.url,
+							description: bookmark.description,
+							icon: bookmark.icon,
+							categoryId: bookmark.categoryId,
+							isPinned: bookmark.isPinned,
+							visibility: bookmark.visibility,
+							tags: bookmark.tags,
+						}
+					: { title: "", url: "", visibility: "public" },
+			);
+		}
+	}
 
 	async function handleFetchMeta() {
 		if (!form.url) return;
@@ -134,8 +137,12 @@ function BookmarkDialog({
 
 	async function handleSubmit(e: FormEvent) {
 		e.preventDefault();
-		await save.mutateAsync({ id: bookmark?.id, data: form });
-		onOpenChange(false);
+		try {
+			await save.mutateAsync({ id: bookmark?.id, data: form });
+			onOpenChange(false);
+		} catch {
+			// 失败时保持弹窗打开,错误提示由 mutation 的 onError 负责
+		}
 	}
 
 	return (
@@ -431,7 +438,11 @@ export default function AdminBookmarks() {
 	const [selected, setSelected] = useState<Set<number>>(new Set());
 	const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
-	const categories: Category[] = catData?.categories ?? [];
+	// 用 useMemo 稳定引用:否则每次渲染都产出新数组,会让下游 useMemo 全部失效
+	const categories: Category[] = useMemo(
+		() => (catData?.categories ?? []) as Category[],
+		[catData],
+	);
 	// 拍平分类树,下拉框/表格里展示完整路径
 	const flatCats = useMemo(() => flattenCategoryTree(categories), [categories]);
 	const catName = useMemo(
@@ -464,17 +475,25 @@ export default function AdminBookmarks() {
 	}
 
 	async function handleRepair(b: Bookmark) {
-		const r = await repairLink.mutateAsync({ title: b.title, url: b.url });
-		setRepairResult({ title: b.title, url: b.url, ...r });
+		try {
+			const r = await repairLink.mutateAsync({ title: b.title, url: b.url });
+			setRepairResult({ title: b.title, url: b.url, ...r });
+		} catch {
+			// 错误提示已由 mutation 的 onError 统一弹出
+		}
 	}
 
 	async function handleSummarize(b: Bookmark) {
-		const r = await summarize.mutateAsync({
-			title: b.title,
-			description: b.description ?? undefined,
-			url: b.url,
-		});
-		setSummaryResult({ title: b.title, url: b.url, summary: r.summary });
+		try {
+			const r = await summarize.mutateAsync({
+				title: b.title,
+				description: b.description ?? undefined,
+				url: b.url,
+			});
+			setSummaryResult({ title: b.title, url: b.url, summary: r.summary });
+		} catch {
+			// 错误提示已由 mutation 的 onError 统一弹出
+		}
 	}
 
 	const sensors = useSensors(
@@ -525,10 +544,20 @@ export default function AdminBookmarks() {
 	function handleDragEnd(e: DragEndEvent) {
 		const { active, over } = e;
 		if (!over || active.id === over.id) return;
-		const oldIndex = bookmarks.findIndex((b) => b.id === active.id);
-		const newIndex = bookmarks.findIndex((b) => b.id === over.id);
-		const next = arrayMove(bookmarks, oldIndex, newIndex);
-		reorder.mutate(next.map((b) => b.id));
+		// 必须基于完整列表重排:bookmarks 是当前筛选后的子集,
+		// 直接回写子集会把它们整体插到全局最前,打乱其余书签的顺序
+		const all = (data?.bookmarks ?? []) as Bookmark[];
+		const from = all.find((b) => b.id === active.id);
+		const to = all.find((b) => b.id === over.id);
+		if (!from || !to) return;
+		// 后端排序是 desc(isPinned) 优先于 sort,跨置顶分组拖拽不会生效,直接提示
+		if (from.isPinned !== to.isPinned) {
+			toast.warning("置顶与非置顶书签不能混合排序");
+			return;
+		}
+		const oldIndex = all.findIndex((b) => b.id === active.id);
+		const newIndex = all.findIndex((b) => b.id === over.id);
+		reorder.mutate(arrayMove(all, oldIndex, newIndex).map((b) => b.id));
 	}
 
 	return (
@@ -567,18 +596,14 @@ export default function AdminBookmarks() {
 							))}
 						</SelectContent>
 					</Select>
-					<Dialog>
-						<DialogTrigger asChild>
-							<Button
-								onClick={() => {
-									setEditing(null);
-									setDialogOpen(true);
-								}}
-							>
-								<Plus className="size-4" /> 新建书签
-							</Button>
-						</DialogTrigger>
-					</Dialog>
+					<Button
+						onClick={() => {
+							setEditing(null);
+							setDialogOpen(true);
+						}}
+					>
+						<Plus className="size-4" /> 新建书签
+					</Button>
 				</div>
 			</div>
 
@@ -772,9 +797,6 @@ summarizePending={summarize.isPending}
 								{repairResult.alternative && (
 									<Button
 										onClick={() => {
-											if (editing && editing.url === repairResult.url) {
-												// 若该死链正在编辑,直接回填
-											}
 											navigator.clipboard?.writeText(repairResult.alternative!);
 											toast.success("已复制替代链接");
 										}}

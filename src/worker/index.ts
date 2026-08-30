@@ -22,7 +22,11 @@ const app = new Hono<AppEnv>()
 app.onError((err, c) => {
 	const status = err instanceof HTTPException ? err.status : 500;
 	console.error(`[api] ${c.req.method} ${c.req.path}:`, err);
-	return c.json({ error: err.message || "Internal Server Error" }, status);
+	// HTTPException 的 message 是受控的业务提示,可安全下发;
+	// 其他异常(驱动错误、SQL 等)可能携带内部细节,只回通用文案
+	const message =
+		err instanceof HTTPException ? err.message : "Internal Server Error";
+	return c.json({ error: message }, status);
 });
 
 // 非 API 路径回退到静态资产(SPA 模式下未命中资产会返回 index.html),保证前端路由刷新/直达不 404

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { createDb, type Db } from "../db/client";
 import {
 	aiUsage,
@@ -22,7 +22,8 @@ import {
 import { extractJson, loadAISettings, runChat, testModel } from "../lib/ai";
 
 const idParam = zValidator("param", z.object({ id: z.coerce.number().int() }));
-const reorderSchema = z.object({ ids: z.array(z.number().int()).min(1) });
+// 与其余批量接口一致限制单次条数:reorder 逐条 UPDATE,不设上限会拖垮请求
+const reorderSchema = z.object({ ids: z.array(z.number().int()).min(1).max(1000) });
 
 // 手动创建/移动分类限制最多三级(导入不受限,保留浏览器书签原始层级)
 const MAX_CATEGORY_DEPTH = 3;
@@ -97,6 +98,12 @@ async function syncTags(db: Db, bookmarkId: number, names: string[]) {
 			.insert(bookmarkTags)
 			.values(rows.map((t) => ({ bookmarkId, tagId: t.id })));
 	}
+	// 解绑后可能留下无人引用的标签,顺带清理,否则 tags 表会随反复编辑不断堆积
+	await db
+		.delete(tags)
+		.where(
+			sql`NOT EXISTS (SELECT 1 FROM ${bookmarkTags} WHERE ${bookmarkTags.tagId} = ${tags.id})`,
+		);
 }
 
 // 检查网址存活:HEAD 优先,不支持/失败时降级 GET;仅 404/410/网络失败判死,防误杀反爬站点
@@ -129,6 +136,38 @@ async function checkUrl(url: string): Promise<boolean> {
 	}
 }
 
+// 解析 title / meta 只需页面头部,无需下载完整响应
+const MAX_METADATA_BYTES = 200_000;
+
+// 读取响应体并限制总量。直接 res.text() 会把整个响应读进内存,
+// 遇到异常大的页面会撑爆 Worker 内存上限。
+async function readBodyCapped(res: Response, limit: number): Promise<string> {
+	if (!res.body) return "";
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	let finished = false;
+	while (total < limit) {
+		const { done, value } = await reader.read();
+		if (done) {
+			finished = true;
+			break;
+		}
+		chunks.push(value);
+		total += value.byteLength;
+	}
+	// 已读够就放弃剩余流,避免继续占用连接
+	if (!finished) await reader.cancel().catch(() => {});
+	const buf = new Uint8Array(Math.min(total, limit));
+	let offset = 0;
+	for (const chunk of chunks) {
+		if (offset >= buf.byteLength) break;
+		buf.set(chunk.subarray(0, buf.byteLength - offset), offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(buf);
+}
+
 // 抓取网页元信息,用于表单自动填充
 async function fetchMetadata(url: string) {
 	const res = await fetch(url, {
@@ -136,7 +175,7 @@ async function fetchMetadata(url: string) {
 		headers: { "User-Agent": "Mozilla/5.0 (compatible; NavBot/1.0)" },
 		redirect: "follow",
 	});
-	const html = (await res.text()).slice(0, 200_000);
+	const html = await readBodyCapped(res, MAX_METADATA_BYTES);
 	const pick = (re: RegExp) => html.match(re)?.[1]?.trim() ?? null;
 	const decode = (s: string | null) =>
 		s
@@ -788,7 +827,9 @@ ${pageText || "（无）"}`;
 	// ---------- AI 用量概览(免费额度防刷 + 自定义 API 防滥用) ----------
 	.get("/ai-usage", async (c) => {
 		const db = createDb(c.env.DB);
-		const sinceToday = sql`(unixepoch() - unixepoch(created_at)) < 86400`;
+		// created_at 是 unix 秒整数,必须直接比较:
+		// SQLite 的 unixepoch(created_at) 会把裸整数当儒略日解析而返回 NULL,导致过滤恒不成立
+		const sinceToday = gt(aiUsage.createdAt, new Date(Date.now() - 86_400_000));
 		// 今日总调用 / 成功 / 失败
 		const [todayAgg] = await db
 			.select({
@@ -826,7 +867,7 @@ ${pageText || "（无）"}`;
 				createdAt: aiUsage.createdAt,
 			})
 			.from(aiUsage)
-			.where(sql`${sinceToday} and success = 0`)
+			.where(and(sinceToday, eq(aiUsage.success, 0)))
 			.orderBy(desc(aiUsage.createdAt))
 			.limit(20);
 
